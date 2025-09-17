@@ -1,0 +1,10 @@
+SKU,US_Description_Short,US_Description_Long,US_Title_Short,US_Meta_Title,Images,Weight_Value,Other_Data
+TEST001,Short description for TEST001,"<p>This is a <strong>long description</strong> with HTML<br/>Perfect for testing</p>",Custom Title TEST001,Meta Title TEST001,"https://example.com/test001-1.jpg, https://example.com/test001-2.jpg",2.5,Extra Info
+TEST002,Another test product,"<h2>HTML Long Description</h2><p>With multiple <em>formatting</em> elements</p>",Title Short 002,Meta Title 002,https://example.com/test002.jpg,1.0,More Data
+TEST003,Third test item,Plain text description without HTML,Short Title 003,Meta 003,"https://example.com/test003-1.jpg, https://example.com/test003-2.jpg, https://example.com/test003-3.jpg",0.75,Additional
+,Missing SKU row,This should be skipped,Skip,Skip,https://example.com/skip.jpg,1,Skip
+TEST004,Duplicate test,First occurrence,First Title,First Meta,https://example.com/test004-1.jpg,3.0,First
+TEST004,Duplicate test,Second occurrence,Second Title,Second Meta,https://example.com/test004-2.jpg,3.5,Second
+TEST005,Invalid weight test,Description,Title,Meta,https://example.com/test005.jpg,invalid,Test
+TEST006,No images test,Description without images,Title,Meta,,2.7,NoImages
+TEST007,Bad URL test,Description,Title,Meta,"https://example.com/good.jpg, not-a-valid-url, https://example.com/good2.jpg",1.5,Mixed
