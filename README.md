@@ -14,6 +14,13 @@ A simple, reliable OAuth helper and CLI for the Lightspeed Retail API. This tool
 
 ## Installation
 
+### Option 1: Super Simple Setup (Recommended)
+1. Double-click **`setup.cmd`** - sets up everything automatically
+2. Edit the `.env` file with your Lightspeed credentials  
+3. Double-click **`lightspeed-login.cmd`** - authenticate once
+4. Double-click **`lightspeed-task.cmd`** - run API tasks anytime
+
+### Option 2: Manual Installation
 ```bash
 pip install -e .
 ```
@@ -38,7 +45,17 @@ LIGHTSPEED_RETAIL_SCOPE=employee:all
 
 ## Usage
 
-### Initialize Authentication
+### 🚀 Super Simple Usage (No Command Line Required)
+
+**First Time Setup:**
+1. Run **`lightspeed-login.cmd`** - handles authentication automatically
+
+**Daily Usage:**  
+2. Run **`lightspeed-task.cmd`** - provides menu of common tasks
+
+### 🛠️ Advanced Command Line Usage
+
+**Initialize Authentication:**
 
 Start the OAuth flow to get your first access token:
 

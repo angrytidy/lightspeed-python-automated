@@ -1,11 +1,13 @@
 """Pydantic models for OAuth tokens and configuration."""
 
+import os
 from datetime import datetime
 from typing import Optional
 from pydantic import BaseModel, Field
+from pydantic_settings import BaseSettings
 
 
-class OAuthConfig(BaseModel):
+class OAuthConfig(BaseSettings):
     """OAuth configuration loaded from environment variables."""
     
     client_id: str = Field(..., description="Lightspeed Retail Client ID")
@@ -13,8 +15,11 @@ class OAuthConfig(BaseModel):
     redirect_uri: str = Field(..., description="OAuth redirect URI")
     scope: str = Field(default="employee:all", description="OAuth scope")
     
-    class Config:
-        env_prefix = "LIGHTSPEED_RETAIL_"
+    model_config = {
+        "env_prefix": "LIGHTSPEED_RETAIL_",
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+    }
 
 
 class TokenResponse(BaseModel):
@@ -38,7 +43,9 @@ class StoredTokens(BaseModel):
     
     def is_expired(self, buffer_seconds: int = 60) -> bool:
         """Check if the access token is expired (with buffer)."""
-        return datetime.utcnow() >= (self.expires_at.timestamp() - buffer_seconds)
+        import datetime as dt
+        buffer_time = dt.timedelta(seconds=buffer_seconds)
+        return dt.datetime.utcnow() >= (self.expires_at - buffer_time)
     
     def mask_token(self, token: str) -> str:
         """Mask a token for display (show first 4 and last 4 chars)."""
