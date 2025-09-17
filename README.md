@@ -1,256 +1,182 @@
-# Google Sheet to Lightspeed Retail CSV Converter
+# Lightspeed OAuth Helper
 
-A reliable Python tool to transform Google Sheet exports into Lightspeed Retail import CSVs for updating existing products. This tool handles web store descriptions, custom fields, images, and weight updates without creating new products.
+A simple, reliable OAuth helper and CLI for the Lightspeed Retail API. This tool handles the complete OAuth 2.0 flow including authorization code exchange, token refresh, and authenticated API calls.
 
 ## Features
 
-- ✅ **Safe Updates Only**: Updates existing products by SKU - never creates new products
-- 🔄 **Three Output CSVs**: Items, Custom Fields, and Images with proper formatting
-- 🛡️ **Data Validation**: Handles missing data, duplicates, and invalid formats gracefully  
-- 📝 **HTML Preservation**: Maintains HTML formatting in long descriptions
-- 📊 **Detailed Reporting**: Generates summary reports with warnings and previews
-- 🔍 **Testing Support**: Dry-run mode and row limiting for safe testing
+- 🔐 **Complete OAuth 2.0 Flow**: Authorization code → access token → refresh token
+- 🌐 **Automatic Browser Flow**: Opens browser and captures callback automatically
+- 🔄 **Auto Token Refresh**: Automatically refreshes expired tokens
+- 💾 **Secure Token Storage**: Stores tokens locally with proper security
+- 🖥️ **Simple CLI**: Easy-to-use command-line interface
+- 🔒 **HTTPS Callback Server**: Self-signed certificate for local development
+- 📊 **Rich Output**: Beautiful console output with tables and JSON formatting
 
-## Quick Start
-
-### 1. Export Google Sheet to CSV
-
-1. Open your Google Sheet
-2. Go to **File** → **Download** → **Comma Separated Values (.csv)**
-3. Save the file (e.g., `client_products.csv`)
-
-*Screenshot placeholder: [Google Sheets export dialog]*
-
-### 2. Install Dependencies
+## Installation
 
 ```bash
-pip install -r requirements.txt
+pip install -e .
 ```
 
-### 3. Run the Converter
+## Configuration
+
+Create a `.env` file in your project root with your Lightspeed Retail API credentials:
+
+```env
+LIGHTSPEED_RETAIL_CLIENT_ID=your_client_id_here
+LIGHTSPEED_RETAIL_CLIENT_SECRET=your_client_secret_here
+LIGHTSPEED_RETAIL_REDIRECT_URI=https://localhost:8080/callback
+LIGHTSPEED_RETAIL_SCOPE=employee:all
+```
+
+### Required Environment Variables
+
+- `LIGHTSPEED_RETAIL_CLIENT_ID`: Your Lightspeed Retail API client ID
+- `LIGHTSPEED_RETAIL_CLIENT_SECRET`: Your Lightspeed Retail API client secret
+- `LIGHTSPEED_RETAIL_REDIRECT_URI`: OAuth redirect URI (must match registered URI)
+- `LIGHTSPEED_RETAIL_SCOPE`: OAuth scope (defaults to `employee:all`)
+
+## Usage
+
+### Initialize Authentication
+
+Start the OAuth flow to get your first access token:
 
 ```bash
-# Basic conversion
-python sheet_to_lightspeed.py --input client_products.csv
+# Automatic flow (opens browser)
+lsr-auth init
 
-# Test with first 50 rows and URL validation
-python sheet_to_lightspeed.py --input client_products.csv --validate-images --limit 50
-
-# Dry run to preview without creating files
-python sheet_to_lightspeed.py --input client_products.csv --dry-run
+# Manual flow (paste code manually)
+lsr-auth init --manual
 ```
 
-## Input Requirements
+This will:
+1. Open your browser to the Lightspeed authorization page
+2. Capture the authorization code via local HTTPS server
+3. Exchange the code for access and refresh tokens
+4. Store tokens securely in `~/.lightspeed/credentials/retail.json`
 
-Your Google Sheet CSV must contain these columns:
+### Refresh Tokens
 
-| Column | Required | Description |
-|--------|----------|-------------|
-| `SKU` | ✅ | Unique product identifier (used for matching) |
-| `US_Description_Short` | ❌ | Short product description |
-| `US_Description_Long` | ❌ | Long description (HTML preserved) |
-| `US_Title_Short` | ❌ | Custom field: Title Short |
-| `US_Meta_Title` | ❌ | Custom field: Meta Title |
-| `Images` | ❌ | Image URLs (comma-separated) |
-| `Weight_Value` | ❌ | Numeric weight value |
-
-**Note**: Additional columns are ignored. Missing optional columns result in empty values in output.
-
-## Output Files
-
-The tool generates three CSV files in the `./out` directory:
-
-### 1. Items_Update.csv
-Updates product descriptions and weight:
-```csv
-systemSku,shortDescription,longDescription,weight
-ABC123,"Short desc","<p>Long HTML description</p>",1.5
-```
-
-### 2. CustomFields_Update.csv  
-Updates custom fields (Title Short, Meta Title):
-```csv
-systemSku,customField1,customField2
-ABC123,"Custom Title","Meta Title Text"
-```
-
-### 3. Images_Update.csv
-Updates product images with sort order:
-```csv
-systemSku,imageUrl,sortOrder
-ABC123,"https://example.com/image1.jpg",1
-ABC123,"https://example.com/image2.jpg",2
-```
-
-## Lightspeed Import Process
-
-### 1. Access Lightspeed Back Office
-1. Log into your Lightspeed Retail Back Office
-2. Navigate to **Inventory** → **Import**
-
-*Screenshot placeholder: [Lightspeed import screen]*
-
-### 2. Import Each CSV File
-
-**Items Update:**
-1. Select **Items_Update.csv**
-2. Choose **Update existing items**
-3. Map columns: `systemSku` → SKU, others as labeled
-4. Run import
-
-**Custom Fields Update:**
-1. Select **CustomFields_Update.csv**  
-2. Choose **Update existing items**
-3. Map `customField1` → "Title Short" (configure in admin)
-4. Map `customField2` → "Meta Title" (configure in admin)
-5. Run import
-
-**Images Update:**
-1. Select **Images_Update.csv**
-2. Choose **Update existing items**
-3. Map columns as labeled
-4. Run import
-
-*Screenshot placeholder: [Lightspeed column mapping]*
-
-### 3. Verify Results
-1. Check a few products manually in Lightspeed
-2. Verify descriptions, custom fields, and images updated correctly
-3. Review the `run_report.md` for any warnings or issues
-
-## Command Line Options
+Refresh your access token using the stored refresh token:
 
 ```bash
-python sheet_to_lightspeed.py [OPTIONS]
-
-Required:
-  --input PATH              Path to input CSV from Google Sheets
-
-Optional:
-  --out-dir PATH           Output directory (default: ./out)
-  --validate-images        Validate image URL syntax (no network calls)
-  --dry-run               Print summary without writing files  
-  --limit N               Process only first N rows for testing
-  --help                  Show help message
+lsr-auth refresh
 ```
 
-## Data Processing Rules
+### Make API Calls
 
-### SKU Handling
-- **Required**: Rows without SKU are skipped and logged
-- **Duplicates**: First occurrence kept, images aggregated from all occurrences
-- **Matching**: SKU maps to `systemSku` in all output files
+Make authenticated API calls to the Lightspeed Retail API:
 
-### Descriptions  
-- **HTML Preserved**: Long descriptions maintain HTML formatting
-- **Empty Values**: Blank descriptions allowed (not synthesized)
-- **Whitespace**: Leading/trailing spaces trimmed
+```bash
+# Get account information
+lsr-auth call /API/V3/Account.json
 
-### Images
-- **Multiple URLs**: Comma-separated URLs split into separate rows
-- **Sort Order**: Sequential numbering (1, 2, 3...) per SKU
-- **Validation**: Basic URL format checking (optional)
-- **Aggregation**: Images from duplicate SKUs combined
+# Get items
+lsr-auth call /API/V3/Item.json
 
-### Weight
-- **Source**: Uses `Weight_Value` column only
-- **Validation**: Must be numeric and non-negative
-- **Invalid Data**: Left blank with warning logged
-
-## Error Handling & Logging
-
-The tool provides comprehensive error handling:
-
-- **Missing SKUs**: Rows skipped with warning
-- **Duplicate SKUs**: Logged but processed (images aggregated)
-- **Invalid URLs**: Skipped with warning (when validation enabled)
-- **Invalid Weights**: Set to blank with warning
-- **File Errors**: Clear error messages with exit codes
-
-### Sample Report Output
-
-```markdown
-# Lightspeed CSV Conversion Report
-
-**Generated:** 2024-01-15 14:30:22
-
-## Summary
-- **Total rows processed:** 1,250
-- **Rows skipped (missing SKU):** 3
-- **Duplicate SKUs found:** 5
-- **Items written:** 1,247
-- **Custom fields written:** 1,247  
-- **Image rows written:** 2,891
-- **Invalid URLs:** 2
-- **Invalid weights:** 1
-
-## Items_Update.csv Preview
-| systemSku | shortDescription | longDescription | weight |
-|-----------|------------------|-----------------|--------|
-| ABC123    | Short desc       | <p>Long...</p>  | 1.5    |
+# Use different HTTP methods
+lsr-auth call /API/V3/Item.json --method POST
 ```
+
+### View Token Information
+
+Check your stored tokens and configuration:
+
+```bash
+lsr-auth info
+```
+
+### Clear Tokens
+
+Remove all stored tokens:
+
+```bash
+lsr-auth clear
+```
+
+## API Endpoints
+
+The tool uses the official Lightspeed Retail API endpoints:
+
+- **Authorization**: `https://cloud.lightspeedapp.com/auth/oauth/authorize`
+- **Token Exchange**: `https://cloud.lightspeedapp.com/auth/oauth/token`
+- **API Base**: `https://api.lightspeedapp.com`
+
+## Token Storage
+
+Tokens are stored securely in:
+- **Location**: `~/.lightspeed/credentials/retail.json`
+- **Format**: JSON with masked display
+- **Security**: Local file permissions only
+
+Example stored token structure:
+```json
+{
+  "access_token": "your_access_token",
+  "refresh_token": "your_refresh_token",
+  "expires_at": "2025-09-17T12:34:56Z",
+  "scope": "employee:all",
+  "token_type": "Bearer"
+}
+```
+
+## Error Handling
+
+The tool handles common OAuth errors gracefully:
+
+- **Invalid credentials**: Clear error messages with setup instructions
+- **Expired tokens**: Automatic refresh with fallback to re-authentication
+- **Network errors**: Retry logic with helpful error messages
+- **State mismatch**: Security validation for OAuth flow
+
+## Development
+
+### Project Structure
+
+```
+lightspeed_oauth/
+├── __init__.py          # Package initialization
+├── cli.py              # Typer CLI interface
+├── auth.py             # OAuth flow implementation
+├── models.py           # Pydantic data models
+├── storage.py          # Token storage and retrieval
+└── http.py             # HTTP client with auto-refresh
+```
+
+### Dependencies
+
+- **httpx**: Modern HTTP client
+- **typer**: CLI framework
+- **pydantic**: Data validation
+- **rich**: Beautiful console output
+- **python-dotenv**: Environment variable loading
+- **fastapi**: Local callback server
+- **uvicorn**: ASGI server
+- **cryptography**: Self-signed certificates
+
+## Security Notes
+
+- Tokens are stored locally with file system permissions
+- Self-signed certificates are used for local HTTPS callback
+- State parameter validation prevents CSRF attacks
+- Tokens are masked in all output except the first/last 4 characters
+- Refresh tokens are used to minimize access token exposure
 
 ## Troubleshooting
 
 ### Common Issues
 
-**"Missing required columns: ['SKU']"**
-- Ensure your CSV has a column named exactly `SKU`
-- Check for extra spaces or different casing
+1. **"Configuration error"**: Check your `.env` file and environment variables
+2. **"No valid tokens available"**: Run `lsr-auth init` to authenticate
+3. **"Token refresh failed"**: Run `lsr-auth init` to re-authenticate
+4. **"State mismatch"**: This is a security feature; try the auth flow again
+5. **"Could not open browser"**: Use `lsr-auth init --manual` for manual flow
 
-**"Invalid weight value: XYZ"**  
-- Weight must be numeric (integer or decimal)
-- Negative weights are rejected
-- Empty weights are allowed
+### Browser Security Warnings
 
-**"Invalid URL for SKU ABC123: badurl"**
-- Only appears when `--validate-images` is used
-- URLs must start with `http://` or `https://`
-- Invalid URLs are skipped, not the entire row
+The local HTTPS server uses a self-signed certificate. Your browser will show a security warning. This is normal for local development. Click "Advanced" and "Proceed to localhost" to continue.
 
-**No output files created**
-- Check if `--dry-run` flag was used
-- Verify input file exists and is readable
-- Check for permission issues in output directory
+## License
 
-### Getting Help
-
-1. Run with `--dry-run` first to preview results
-2. Use `--limit 10` to test with small data samples
-3. Check `run_report.md` for detailed warnings and statistics
-4. Verify your Google Sheet has the expected column names
-
-## File Structure
-
-```
-/project
-├── sheet_to_lightspeed.py    # Main conversion script
-├── requirements.txt          # Python dependencies  
-├── README.md                # This file
-└── out/                     # Generated output (created on run)
-    ├── Items_Update.csv
-    ├── CustomFields_Update.csv  
-    ├── Images_Update.csv
-    └── run_report.md
-```
-
-## Technical Details
-
-- **Python Version**: 3.10+
-- **Dependencies**: pandas, python-slugify
-- **Encoding**: UTF-8 with proper CSV quoting
-- **Memory**: Processes entire CSV in memory (suitable for typical product catalogs)
-- **Performance**: Handles thousands of products efficiently
-
-## Safety Features
-
-- ✅ No network calls (offline processing)
-- ✅ No credential storage or transmission  
-- ✅ Preserves original data (read-only input)
-- ✅ Deterministic output ordering
-- ✅ Comprehensive validation and logging
-- ✅ Dry-run mode for safe testing
-
----
-
-*For support or feature requests, please refer to your development team.*
+MIT License - see LICENSE file for details.
