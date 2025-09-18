@@ -14,6 +14,7 @@ class OAuthConfig(BaseSettings):
     client_secret: str = Field(..., description="Lightspeed Retail Client Secret")
     redirect_uri: str = Field(..., description="OAuth redirect URI")
     scope: str = Field(default="employee:all", description="OAuth scope")
+    publicly_distributed: bool = Field(default=False, description="Enable PKCE public client flow (omit client_secret)")
     
     model_config = {
         "env_prefix": "LIGHTSPEED_RETAIL_",

@@ -88,7 +88,12 @@ def init(
             
             # Start callback server
             console.print("Starting local callback server...")
-            code, error = asyncio.run(oauth_client.start_callback_server(state))
+            try:
+                code, error = asyncio.run(oauth_client.start_callback_server(state))
+            except Exception as e:
+                console.print(f"[yellow]{e}[/yellow]")
+                console.print("Falling back to manual paste flow...")
+                code, error = oauth_client.manual_auth_flow(state)
             
             if error:
                 console.print(f"[red]Error: {error}[/red]")

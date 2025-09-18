@@ -32,6 +32,19 @@ class OAuthClient:
         """Initialize OAuth client with configuration."""
         self.config = config
         self.client = httpx.Client(timeout=30.0)
+        self._code_verifier: Optional[str] = None
+        self._code_challenge: Optional[str] = None
+
+    # ---- PKCE helpers ----
+    def _generate_code_verifier(self) -> str:
+        # RFC 7636 recommends 43-128 characters URL-safe string
+        return secrets.token_urlsafe(64)
+
+    def _code_challenge_s256(self, verifier: str) -> str:
+        import base64
+        import hashlib
+        digest = hashlib.sha256(verifier.encode("ascii")).digest()
+        return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
     
     def generate_state(self) -> str:
         """Generate a random state parameter for OAuth flow."""
@@ -53,7 +66,13 @@ class OAuthClient:
             "redirect_uri": self.config.redirect_uri,
             "state": state,
         }
-        
+        # If public distribution, enable PKCE
+        if getattr(self.config, "publicly_distributed", False):
+            self._code_verifier = self._generate_code_verifier()
+            self._code_challenge = self._code_challenge_s256(self._code_verifier)
+            params["code_challenge"] = self._code_challenge
+            params["code_challenge_method"] = "S256"
+
         return f"{self.AUTHORIZE_URL}?{urlencode(params)}"
     
     def exchange_code_for_tokens(self, code: str) -> StoredTokens:
@@ -68,20 +87,46 @@ class OAuthClient:
         Raises:
             httpx.HTTPError: If token exchange fails
         """
+        # Build form-encoded payload
         data = {
             "client_id": self.config.client_id,
-            "client_secret": self.config.client_secret,
             "grant_type": "authorization_code",
             "code": code,
+            "redirect_uri": self.config.redirect_uri,
         }
-        
-        response = self.client.post(
-            self.TOKEN_URL,
-            json=data,
-            headers={"Content-Type": "application/json"}
-        )
-        response.raise_for_status()
-        
+        # Include secret unless using PKCE public flow
+        if not getattr(self.config, "publicly_distributed", False):
+            data["client_secret"] = self.config.client_secret
+        else:
+            # PKCE requires the original verifier
+            if not self._code_verifier:
+                # Safety: generate empty verifier error
+                raise ValueError("Missing code_verifier for PKCE flow. Restart 'lsr-auth init'.")
+            data["code_verifier"] = self._code_verifier
+
+        try:
+            response = self.client.post(
+                self.TOKEN_URL,
+                data=data,
+                headers={"Content-Type": "application/x-www-form-urlencoded"}
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            message = "Token exchange failed"
+            if e.response is not None:
+                try:
+                    err_json = e.response.json()
+                    err_desc = err_json.get("error_description") or err_json.get("error")
+                except Exception:
+                    err_desc = e.response.text
+                if e.response.status_code in (400, 401):
+                    if "redirect_uri" in (err_desc or "").lower():
+                        message = "Invalid redirect URI: must match exactly what you registered"
+                    elif "scope" in (err_desc or "").lower():
+                        message = "Missing or invalid scope. Ensure LIGHTSPEED_RETAIL_SCOPE matches app settings"
+                raise ValueError(f"{message}. Details: {err_desc}") from e
+            raise
+
         token_response = TokenResponse(**response.json())
         
         # Calculate expiry time with 60 second buffer
@@ -109,18 +154,32 @@ class OAuthClient:
         """
         data = {
             "client_id": self.config.client_id,
-            "client_secret": self.config.client_secret,
             "grant_type": "refresh_token",
             "refresh_token": refresh_token,
         }
-        
-        response = self.client.post(
-            self.TOKEN_URL,
-            json=data,
-            headers={"Content-Type": "application/json"}
-        )
-        response.raise_for_status()
-        
+        if not getattr(self.config, "publicly_distributed", False):
+            data["client_secret"] = self.config.client_secret
+        try:
+            response = self.client.post(
+                self.TOKEN_URL,
+                data=data,
+                headers={"Content-Type": "application/x-www-form-urlencoded"}
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            message = "Token refresh failed"
+            if e.response is not None:
+                try:
+                    err_json = e.response.json()
+                    err_desc = err_json.get("error_description") or err_json.get("error")
+                except Exception:
+                    err_desc = e.response.text
+                if e.response.status_code in (400, 401):
+                    if "invalid_grant" in (err_desc or "").lower():
+                        message = "Refresh token invalid or expired. Run 'lsr-auth init' to re-authenticate"
+                raise ValueError(f"{message}. Details: {err_desc}") from e
+            raise
+
         token_response = TokenResponse(**response.json())
         
         # Calculate expiry time with 60 second buffer
@@ -254,7 +313,7 @@ class OAuthClient:
                 </html>
             """)
         
-        # Create self-signed certificate
+        # Create self-signed certificate (HTTPS). If this fails, guide user to --manual.
         cert_path = "localhost.pem"
         key_path = "localhost.key"
         
@@ -304,7 +363,7 @@ class OAuthClient:
                 os.unlink(key_path)
             except OSError:
                 pass
-            raise e
+            raise RuntimeError("Failed to start HTTPS callback server. Use 'lsr-auth init --manual' and paste the redirect URL.")
     
     def manual_auth_flow(self, state: str) -> Tuple[str, str]:
         """Handle manual authentication flow (user pastes code).
@@ -319,14 +378,23 @@ class OAuthClient:
         
         print(f"\nPlease visit this URL to authorize the application:")
         print(f"{auth_url}\n")
-        
-        # Prompt for code
-        code = input("Enter the authorization code: ").strip()
-        
-        if not code:
-            return None, "No authorization code provided"
-        
-        return code, None
+        # Prompt for full redirect URL
+        redirect = input("Paste the full redirect URL here: ").strip()
+        if not redirect:
+            return None, "No redirect URL provided"
+        try:
+            parsed = urlparse(redirect)
+            query = parse_qs(parsed.query)
+            # Validate state
+            received_state = query.get("state", [None])[0]
+            if received_state != state:
+                return None, f"State mismatch. Expected {state}, got {received_state}"
+            code = query.get("code", [None])[0]
+            if not code:
+                return None, "No authorization code found in redirect URL"
+            return code, None
+        except Exception as e:
+            return None, f"Failed to parse redirect URL: {e}"
     
     def close(self):
         """Close the HTTP client."""

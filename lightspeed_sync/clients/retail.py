@@ -43,6 +43,52 @@ class RetailClient(BaseClient):
         except Exception:
             return None
     
+    async def find_item_by_manufacturer_sku(self, manufacturer_sku: str) -> Optional[Dict[str, Any]]:
+        """Find item by manufacturer SKU instead of custom SKU."""
+        try:
+            params = {
+                "manufacturerSku": manufacturer_sku,
+                "load_relations": "all",
+                "limit": 1
+            }
+            
+            response = await self.get(f"Account/{self.account_id}/Item.json", params=params)
+            
+            if "Item" in response and response["Item"]:
+                items = response["Item"] if isinstance(response["Item"], list) else [response["Item"]]
+                return items[0] if items else None
+            
+            return None
+            
+        except Exception as e:
+            self.console.print(f"[yellow]Error finding item by manufacturer SKU {manufacturer_sku}: {e}[/yellow]")
+            return None
+    
+    async def find_items_by_manufacturer_sku_batch(self, manufacturer_skus: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+        """Find multiple items by manufacturer SKU, handling duplicates."""
+        results = {}
+        
+        for sku in manufacturer_skus:
+            try:
+                params = {
+                    "manufacturerSku": sku,
+                    "load_relations": "all"
+                }
+                
+                response = await self.get(f"Account/{self.account_id}/Item.json", params=params)
+                
+                if "Item" in response and response["Item"]:
+                    items = response["Item"] if isinstance(response["Item"], list) else [response["Item"]]
+                    results[sku] = items
+                else:
+                    results[sku] = []
+                    
+            except Exception as e:
+                self.console.print(f"[yellow]Error finding items by manufacturer SKU {sku}: {e}[/yellow]")
+                results[sku] = []
+        
+        return results
+    
     async def get_item(self, item_id: str) -> Dict[str, Any]:
         """Get item details by ID."""
         response = await self.get(f"Account/{self.account_id}/Item/{item_id}.json")

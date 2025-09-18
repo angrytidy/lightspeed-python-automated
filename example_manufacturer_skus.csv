@@ -1,0 +1,4 @@
+SKU,US_Description_Short,US_Description_Long,US_Title_Short,US_Meta_Title,Images,Weight_Value
+MANUFACTURER-SKU-001,Short description for product 1,Long detailed description for product 1 with features and benefits,Short Title 1,Meta Title for SEO 1,https://example.com/image1.jpg,1.5
+MANUFACTURER-SKU-002,Short description for product 2,Long detailed description for product 2 with features and benefits,Short Title 2,Meta Title for SEO 2,https://example.com/image2.jpg,2.0
+MANUFACTURER-SKU-003,Short description for product 3,Long detailed description for product 3 with features and benefits,Short Title 3,Meta Title for SEO 3,https://example.com/image3.jpg,0.8

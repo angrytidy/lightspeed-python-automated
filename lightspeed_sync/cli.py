@@ -41,6 +41,8 @@ def sync(
     set_weight: bool = typer.Option(False, "--set-weight", help="Update product weights in Retail"),
     images: str = typer.Option("append", "--images", help="Image update mode (append, replace, skip)"),
     concurrency: int = typer.Option(4, "--concurrency", help="Number of concurrent API requests"),
+    use_manufacturer_sku: bool = typer.Option(False, "--use-manufacturer-sku", help="Use manufacturer SKU for Retail API lookup instead of custom SKU"),
+    duplicate_strategy: str = typer.Option("first_found", "--duplicate-strategy", help="Strategy for handling duplicate manufacturer SKUs (first_found, skip, error)"),
 ):
     """Sync product data from CSV to Lightspeed APIs."""
     # Validate choices
@@ -48,11 +50,13 @@ def sync(
         raise typer.BadParameter(f"Invalid update choice: {update}. Must be one of: all, ecom, retail")
     if images not in ["append", "replace", "skip"]:
         raise typer.BadParameter(f"Invalid images choice: {images}. Must be one of: append, replace, skip")
+    if duplicate_strategy not in ["first_found", "skip", "error"]:
+        raise typer.BadParameter(f"Invalid duplicate strategy: {duplicate_strategy}. Must be one of: first_found, skip, error")
     
     try:
         asyncio.run(_sync_main(
             input_file, map_cache, out_dir, dry_run, limit, force,
-            update, set_weight, images, concurrency
+            update, set_weight, images, concurrency, use_manufacturer_sku, duplicate_strategy
         ))
     except KeyboardInterrupt:
         console.print("\n[yellow]Sync cancelled by user[/yellow]")
@@ -117,6 +121,22 @@ def cache(
         console.print("[green]Cache cleared successfully[/green]")
 
 
+@app.command()
+def test_manufacturer_sku(
+    sku: str = typer.Option(..., "--sku", help="Manufacturer SKU to test"),
+    map_cache: Path = typer.Option(".cache/sku_map.json", "--map-cache", help="SKU mapping cache file"),
+):
+    """Test manufacturer SKU resolution for a single SKU."""
+    try:
+        asyncio.run(_test_manufacturer_sku_main(sku, map_cache))
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Test cancelled by user[/yellow]")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Test failed: {e}[/red]")
+        raise typer.Exit(1)
+
+
 async def _auth_main(service: str, reauth: bool) -> None:
     """Main authentication logic."""
     config = load_config_from_env()
@@ -174,6 +194,60 @@ async def _auth_main(service: str, reauth: bool) -> None:
     console.print("\n[green]Authentication complete![/green]")
 
 
+async def _test_manufacturer_sku_main(sku: str, map_cache: Path) -> None:
+    """Test manufacturer SKU resolution for a single SKU."""
+    config = load_config_from_env()
+    matcher = SKUMatcher(map_cache, console)
+    
+    console.print(f"[bold cyan]Testing Manufacturer SKU Resolution[/bold cyan]")
+    console.print(f"Testing SKU: {sku}\n")
+    
+    # Load authentication tokens
+    retail_tokens = None
+    ecom_tokens = None
+    
+    try:
+        retail_auth = RetailAuth(
+            config.retail.client_id,
+            config.retail.client_secret,
+            config.credentials_dir
+        )
+        retail_tokens = await retail_auth.get_valid_tokens()
+        console.print("[green]✓ Retail authentication loaded[/green]")
+    except AuthError as e:
+        console.print(f"[red]Retail authentication failed: {e}[/red]")
+        return
+    
+    try:
+        ecom_auth = EcomAuth(
+            config.ecom.client_id,
+            config.ecom.client_secret,
+            config.credentials_dir
+        )
+        ecom_tokens = await ecom_auth.get_valid_tokens()
+        console.print("[green]✓ eCom authentication loaded[/green]")
+    except AuthError as e:
+        console.print(f"[red]eCom authentication failed: {e}[/red]")
+        return
+    
+    # Test manufacturer SKU resolution
+    console.print(f"\n[bold]Testing Manufacturer SKU Resolution[/bold]")
+    matches = await matcher.resolve_by_manufacturer_sku(
+        [sku], retail_tokens, ecom_tokens
+    )
+    
+    match = matches.get(sku)
+    if match:
+        console.print(f"[green]Resolution Results:[/green]")
+        console.print(f"  SKU: {sku}")
+        console.print(f"  Retail Item ID: {match.retail_item_id or 'Not found'}")
+        console.print(f"  eCom Product ID: {match.ecom_product_id or 'Not found'}")
+        console.print(f"  Has Retail Match: {match.has_retail_match}")
+        console.print(f"  Has eCom Match: {match.has_ecom_match}")
+    else:
+        console.print(f"[red]No match found for SKU: {sku}[/red]")
+
+
 async def _sync_main(
     input_file: Path,
     map_cache: Path,
@@ -185,6 +259,8 @@ async def _sync_main(
     set_weight: bool,
     images: str,
     concurrency: int,
+    use_manufacturer_sku: bool,
+    duplicate_strategy: str,
 ) -> None:
     """Main sync logic."""
     
@@ -257,9 +333,16 @@ async def _sync_main(
     # Resolve SKUs to API IDs
     console.print("\n[bold]Step 3: Resolving SKUs[/bold]")
     skus = [p["sku"] for p in products]
-    matches = await matcher.resolve_sku_batch(
-        skus, retail_tokens, ecom_tokens, concurrency
-    )
+    
+    if use_manufacturer_sku:
+        console.print("[yellow]Using manufacturer SKU resolution for Retail API[/yellow]")
+        matches = await matcher.resolve_manufacturer_sku_with_duplicate_handling(
+            skus, retail_tokens, ecom_tokens, concurrency, duplicate_strategy
+        )
+    else:
+        matches = await matcher.resolve_sku_batch(
+            skus, retail_tokens, ecom_tokens, concurrency
+        )
     
     reporter.print_sku_resolution_summary(matches, len(skus))
     

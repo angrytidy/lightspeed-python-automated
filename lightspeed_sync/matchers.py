@@ -229,6 +229,137 @@ class SKUMatcher:
             self.cache_file.unlink()
         self.console.print("[yellow]Cache cleared[/yellow]")
     
+    async def resolve_by_manufacturer_sku(
+        self,
+        skus: List[str],
+        retail_tokens: Optional[AuthTokens] = None,
+        ecom_tokens: Optional[AuthTokens] = None,
+        max_concurrent: int = 5
+    ) -> Dict[str, ProductMatch]:
+        """Resolve SKUs using manufacturer SKU instead of custom SKU."""
+        results = {}
+        
+        # Check cache first
+        uncached_skus = []
+        for sku in skus:
+            cached = self.get_cached_match(sku)
+            if cached:
+                results[sku] = cached
+            else:
+                uncached_skus.append(sku)
+        
+        if not uncached_skus:
+            self.console.print(f"[green]All {len(skus)} SKUs found in cache[/green]")
+            return results
+        
+        self.console.print(f"[yellow]Resolving {len(uncached_skus)} SKUs via manufacturer SKU lookup...[/yellow]")
+        
+        # Create semaphore to limit concurrent requests
+        semaphore = asyncio.Semaphore(max_concurrent)
+        
+        # Create progress bar
+        with Progress() as progress:
+            task = progress.add_task("[cyan]Resolving manufacturer SKUs...", total=len(uncached_skus))
+            
+            async def resolve_single_manufacturer_sku(sku: str) -> ProductMatch:
+                async with semaphore:
+                    match = ProductMatch(sku=sku)
+                    
+                    # Resolve retail ID using manufacturer SKU
+                    if retail_tokens:
+                        try:
+                            async with RetailClient(retail_tokens) as retail_client:
+                                item = await retail_client.find_item_by_manufacturer_sku(sku)
+                                if item and item.get("itemID"):
+                                    match.retail_item_id = str(item["itemID"])
+                                    self.console.print(f"[green]Found Retail item for manufacturer SKU {sku}: {item['itemID']}[/green]")
+                        except Exception as e:
+                            self.console.print(f"[yellow]Retail manufacturer SKU lookup failed for {sku}: {e}[/yellow]")
+                    
+                    # Resolve eCom ID (still use regular SKU lookup for eCom)
+                    if ecom_tokens:
+                        try:
+                            async with EcomClient(ecom_tokens) as ecom_client:
+                                product = await ecom_client.find_product_by_sku(sku)
+                                if product and product.get("id"):
+                                    match.ecom_product_id = str(product["id"])
+                        except Exception as e:
+                            self.console.print(f"[yellow]eCom lookup failed for {sku}: {e}[/yellow]")
+                    
+                    # Cache the result
+                    self.cache_match(match)
+                    progress.advance(task)
+                    
+                    return match
+            
+            # Execute all resolutions concurrently
+            tasks = [resolve_single_manufacturer_sku(sku) for sku in uncached_skus]
+            resolved_matches = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Process results
+            for sku, result in zip(uncached_skus, resolved_matches):
+                if isinstance(result, Exception):
+                    self.console.print(f"[red]Error resolving manufacturer SKU {sku}: {result}[/red]")
+                    results[sku] = ProductMatch(sku=sku)
+                else:
+                    results[sku] = result
+        
+        # Save cache
+        self._save_cache()
+        
+        # Print summary
+        retail_matches = sum(1 for m in results.values() if m.has_retail_match)
+        ecom_matches = sum(1 for m in results.values() if m.has_ecom_match)
+        
+        self.console.print(f"[green]Manufacturer SKU Resolution Summary:[/green]")
+        self.console.print(f"  Total SKUs: {len(results)}")
+        self.console.print(f"  Retail matches: {retail_matches}")
+        self.console.print(f"  eCom matches: {ecom_matches}")
+        self.console.print(f"  Both services: {sum(1 for m in results.values() if m.has_retail_match and m.has_ecom_match)}")
+        
+        return results
+    
+    def find_duplicate_manufacturer_skus(self, skus: List[str]) -> List[str]:
+        """Find SKUs that appear multiple times in the list."""
+        from collections import Counter
+        sku_counts = Counter(skus)
+        return [sku for sku, count in sku_counts.items() if count > 1]
+    
+    async def resolve_manufacturer_sku_with_duplicate_handling(
+        self,
+        skus: List[str],
+        retail_tokens: Optional[AuthTokens] = None,
+        ecom_tokens: Optional[AuthTokens] = None,
+        duplicate_resolution_strategy: str = "first_found"
+    ) -> Dict[str, ProductMatch]:
+        """Resolve manufacturer SKUs with special handling for duplicates."""
+        # Find duplicates
+        duplicates = self.find_duplicate_manufacturer_skus(skus)
+        if duplicates:
+            self.console.print(f"[yellow]Found duplicate manufacturer SKUs: {duplicates}[/yellow]")
+            self.console.print(f"[yellow]Using resolution strategy: {duplicate_resolution_strategy}[/yellow]")
+        
+        # Get unique SKUs for API calls
+        unique_skus = list(set(skus))
+        
+        # Resolve unique SKUs
+        results = await self.resolve_by_manufacturer_sku(
+            unique_skus, retail_tokens, ecom_tokens
+        )
+        
+        # Handle duplicates based on strategy
+        if duplicates and duplicate_resolution_strategy == "first_found":
+            # For duplicates, use the first found result
+            for sku in skus:
+                if sku in duplicates and sku not in results:
+                    # Find the first occurrence result
+                    for original_sku, match in results.items():
+                        if original_sku == sku:
+                            results[sku] = match
+                            break
+        
+        return results
+    
     def get_cache_stats(self) -> Dict[str, int]:
         """Get statistics about the current cache."""
         total = len(self.cache)
